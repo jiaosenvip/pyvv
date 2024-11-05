@@ -2,6 +2,12 @@
 
 欢迎来到 Python Version，这是一个支持 Python 多版本共存的项目
 
+## 安装
+
+```
+pip install pyvv -U
+```
+
 ```
 命令列表:
 
