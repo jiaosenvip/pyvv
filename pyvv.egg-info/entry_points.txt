@@ -1,0 +1,2 @@
+[console_scripts]
+pyvv = pyvv:pyvv.main

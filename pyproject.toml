@@ -1,0 +1,35 @@
+[project]
+name = "pyvv"
+version = "2.0.0"
+description = "托管多版本 Python runtime 与命名虚拟环境的命令行工具"
+authors = [
+    { name = "jiaosenvip" },
+    { name = "jiaosenvip", email = "jiaosenvip@163.com" },
+]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = ["rich>=13.9.0", "uv>=0.11.15"]
+keywords = ["python", "venv", "virtualenv", "runtime", "version-manager", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Interpreters",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/jiaosenvip/pyvv"
+Documentation = "https://github.com/jiaosenvip/pyvv/wiki"
+
+[project.scripts]
+pyvv = "pyvv:pyvv.main"

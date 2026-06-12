@@ -1,21 +1,87 @@
 # pyvv
 
-欢迎来到 Python Version，这是一个支持 Python 多版本共存的项目
+欢迎来到 Python Version，这是一个支持 Python 多版本项目。
 
-## 安装
+当前版本采用 **托管 runtime + 多命名 venv** 的混合方案：
 
+1. `pyvv <version>` 先让 `uv` 下载并定位对应 Python
+2. 把完整 Python 运行时复制到 `~/.pyvv/runtimes/<version>/python-home/`
+3. 再基于这个私有 runtime 创建一个或多个虚拟环境：
+   `~/.pyvv/runtimes/<version>/envs/<name>/`
+4. 日常执行、`pip install`、脚本运行都走指定名字的私有 venv
+5. 通过 `-n <name>` 或 `--name <name>` 可以在同一个 Python 版本下创建多个环境
+6. 如果某个环境损坏，pyvv 会自动重建该环境；如果 runtime 损坏，pyvv 会重建 runtime
+
+## 关于 uv
+
+当前版本下载和定位 Python 依赖 `uv` 作为后端，因此安装 `pyvv` 时会同时安装 `uv`。
+
+不过 `pyvv` 在日常使用时并不是简单把环境直接挂在 `uv` 上，而是：
+
+- 先把 Python runtime 复制到自己的目录
+- 再基于这个私有 runtime 创建命名虚拟环境
+
+所以即使后续 `uv` 的原始 runtime 被清理，`pyvv` 自己托管的环境仍然可以继续使用。
+
+后续版本有可能进一步去掉对 `uv` 的依赖，把 Python 下载、索引、解压和托管全部收进 `pyvv` 内部。
+
+## 目录结构示例
+
+```text
+~/.pyvv/
+  runtimes/
+    3.14/
+      python-home/
+        python.exe
+        Lib/
+        DLLs/
+      envs/
+        default/
+          Scripts/
+            python.exe
+            pip.exe
+        data/
+          Scripts/
+            python.exe
+            pip.exe
 ```
-pip install pyvv -U
+
+## 常用示例
+
+```text
+pyvv 3.14
+pyvv 3.14 -n data
+pyvv 3.14 --name data pip list
+pyvv 3.14 -n web pip install fastapi
+pyvv 3.14 -n web hello.py
+pyvv 3.14 -n web -m http.server
+pyvv remove 3.14 -n data
 ```
 
-```
-命令列表:
+如果你要运行像 `ipython` 这样的环境命令，先安装对应包：
 
-  【pyvv help】           查看帮助
-  【pyvv list】           查看已安装/可安装
-  【pyvv 3.13】           安装/进入 Python3.13, 其他版本以此类推
-  【pyvv 3.13 pip】       运行 Python3.13 的 pip 命令
-  【pyvv 3.13 run uv】    运行 Python3.13 的 uv 命令（如果已安装）
-  【pyvv 3.13 hello.py】  通过 Python3.13 运行脚本 hello.py
-  【pyvv remove 3.13】    删除 Python3.13
+```text
+pyvv 3.14 -n web pip install ipython
+pyvv 3.14 -n web ipython
+```
+
+## 说明
+
+- 不写 `-n/--name` 时，默认环境名是 `default`
+- 只有删除某个版本下最后一个环境时，pyvv 才会顺带清理该版本的 runtime
+- pyvv 会自动判断你要执行的是 pip、Python 参数、Python 脚本还是环境命令
+
+## 命令列表
+
+```text
+【pyvv help】                          查看帮助
+【pyvv list】                          查看已安装/可安装的 Python 版本
+【pyvv mirror】                        给全局 pip 设置清华镜像源
+【pyvv 3.14】                          进入 Python3.14 默认环境
+【pyvv 3.14 -n data】                  进入 Python3.14 的 data 环境
+【pyvv 3.14 --name data pip list】     在指定环境运行 pip 命令
+【pyvv 3.14 hello.py】                 通过当前环境运行脚本 hello.py
+【pyvv 3.14 -m http.server】           直接传递给 Python 自身参数
+【pyvv remove 3.14】                   删除 Python3.14 的默认环境
+【pyvv remove 3.14 -n data】           删除 Python3.14 的 data 环境
 ```
