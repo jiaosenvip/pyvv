@@ -1,6 +1,6 @@
 [project]
 name = "pyvv"
-version = "2.0.0"
+version = "2.1.0"
 description = "托管多版本 Python runtime 与命名虚拟环境的命令行工具"
 authors = [
     { name = "jiaosenvip" },
@@ -9,7 +9,7 @@ authors = [
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
-dependencies = ["rich>=13.9.0", "uv>=0.11.15"]
+dependencies = ["rich>=13.9.0"]
 keywords = ["python", "venv", "virtualenv", "runtime", "version-manager", "cli"]
 classifiers = [
     "Development Status :: 4 - Beta",

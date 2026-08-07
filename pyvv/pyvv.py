@@ -2,20 +2,131 @@ import json
 import os
 import re
 import shutil
+import site
 import subprocess
 import sys
+import sysconfig
 import time
 from pathlib import Path
 
 from rich import print
 from rich.tree import Tree
 
+UV_PACKAGE = "uv>=0.11.15"
 
-def load_version_list() -> list[str]:
+
+def _uv_candidates(directory: Path) -> list[Path]:
+    executable = "uv.exe" if os.name == "nt" else "uv"
+    return [directory / "Scripts" / executable, directory / "bin" / executable]
+
+
+def _user_uv_candidates() -> list[Path]:
+    executable = "uv.exe" if os.name == "nt" else "uv"
+    user_base = Path(site.getuserbase())
+    candidates = [user_base / "Scripts" / executable, user_base / "bin" / executable]
+    try:
+        candidates.append(Path(sysconfig.get_path("scripts", scheme="nt_user")))
+    except (KeyError, ValueError):
+        pass
+    return candidates
+
+
+def find_uv() -> str | None:
+    """Find uv in PATH or in pyvv's/user-local tool locations."""
+    uv_path = shutil.which("uv")
+    if uv_path:
+        return uv_path
+    for candidate in _uv_candidates(UV_VENV_DIR) + _user_uv_candidates():
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _run_uv_pip_install(python_path: Path, arguments: list[str]) -> tuple[bool, str]:
     result = subprocess.run(
-        ["uv", "python", "list", "--only-downloads", "--output-format", "json"],
+        [str(python_path), "-m", "pip", "install", *arguments, UV_PACKAGE],
         capture_output=True,
         text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return True, ""
+    return False, result.stderr or result.stdout or "pip 安装 uv 失败"
+
+
+def bootstrap_uv() -> str | None:
+    """Install uv into a private venv, then fall back to the user site."""
+    errors: list[str] = []
+    UV_VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
+    venv_python = UV_VENV_DIR / (
+        "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    )
+
+    if not venv_python.exists():
+        result = subprocess.run(
+            [sys.executable, "-m", "venv", str(UV_VENV_DIR)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            errors.append(result.stderr or result.stdout or "创建 uv 专用虚拟环境失败")
+
+    if venv_python.exists():
+        installed, detail = _run_uv_pip_install(venv_python, ["--upgrade"])
+        if installed:
+            uv_path = find_uv()
+            if uv_path:
+                return uv_path
+        elif detail:
+            errors.append(detail)
+
+    user_python = Path(sys.executable)
+    installed, detail = _run_uv_pip_install(user_python, ["--user"])
+    if installed:
+        uv_path = find_uv()
+        if uv_path:
+            return uv_path
+    elif detail:
+        errors.append(detail)
+
+    installed, detail = _run_uv_pip_install(
+        user_python, ["--user", "--break-system-packages"]
+    )
+    if installed:
+        uv_path = find_uv()
+        if uv_path:
+            return uv_path
+    elif detail:
+        errors.append(detail)
+    if errors:
+        print(f"[dim]最后一次安装失败信息：{errors[-1]}[/]")
+    return None
+
+
+def require_uv() -> str:
+    """Return uv's path, installing it privately when necessary."""
+    uv_path = find_uv()
+    if uv_path is not None:
+        return uv_path
+    print("[yellow]未找到 uv，正在使用当前 Python 自动安装到 pyvv 私有目录...[/]")
+    uv_path = bootstrap_uv()
+    if uv_path is not None:
+        print(f"[green]uv 已准备就绪：{uv_path}[/]")
+        return uv_path
+    raise RuntimeError(
+        "自动安装 uv 失败。请确认当前 Python 可用，并检查 pip 错误；也可以手动安装：\n"
+        "python -m pip install --user uv"
+    )
+
+
+def load_version_list() -> list[str]:
+    uv_command = require_uv()
+    result = subprocess.run(
+        [uv_command, "python", "list", "--only-downloads", "--output-format", "json"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr or result.stdout or "uv python list failed")
@@ -26,8 +137,8 @@ def load_version_list() -> list[str]:
     ]
 
 
-VERSION_LIST = load_version_list()
 PYVV_HOME = Path.home() / ".pyvv"
+UV_VENV_DIR = PYVV_HOME / "tools" / "uv"
 RUNTIME_DIR = PYVV_HOME / "runtimes"
 DEFAULT_ENV_NAME = "default"
 PIP_INDEX_URL = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
@@ -45,7 +156,7 @@ HELP_STR = """
 
 说明：
 
-  - 当前版本下载和定位 Python 仍依赖 uv 作为后端
+  - 当前版本下载和定位 Python 依赖 uv 作为后端
   - 不写 -n/--name 时，默认环境名是 default
   - pyvv 会自动判断你要执行的是 pip、Python 参数、Python 脚本还是环境命令
   - pyvv mirror 会给全局 pip 设置清华镜像源，需要用户主动执行才会生效
@@ -155,7 +266,7 @@ def resolve_env_command(version: str, env_name: str, command_name: str) -> Path 
 
 def run_command(command: list[str]) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(command, text=True)
+        return subprocess.run(command, text=True, check=False)
     except KeyboardInterrupt:
         raise SystemExit(130)
     except FileNotFoundError as exc:
@@ -178,9 +289,10 @@ def is_python_healthy(python_path: Path) -> bool:
             capture_output=True,
             text=True,
             timeout=15,
+            check=True,
         )
         return result.returncode == 0
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -197,20 +309,23 @@ def get_python_version(python_path: Path) -> str | None:
             capture_output=True,
             text=True,
             timeout=15,
+            check=True,
         )
         if result.returncode != 0:
             return None
         version = result.stdout.strip()
         return version or None
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
 
 
 def ensure_uv_python(version: str) -> str:
+    uv_command = require_uv()
     install = subprocess.run(
-        ["uv", "python", "install", version, "--managed-python"],
+        [uv_command, "python", "install", version, "--managed-python"],
         capture_output=True,
         text=True,
+        check=False,
     )
     if install.returncode != 0:
         raise RuntimeError(
@@ -218,9 +333,10 @@ def ensure_uv_python(version: str) -> str:
         )
 
     found = subprocess.run(
-        ["uv", "python", "find", version, "--managed-python"],
+        [uv_command, "python", "find", version, "--managed-python"],
         capture_output=True,
         text=True,
+        check=False,
     )
     if found.returncode != 0:
         raise RuntimeError(
@@ -251,6 +367,7 @@ def create_env_from_runtime(version: str, python_home: Path, env_dir: Path) -> N
         [str(runtime_python), "-m", "venv", str(env_dir), "--copies"],
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -262,6 +379,7 @@ def create_env_from_runtime(version: str, python_home: Path, env_dir: Path) -> N
         [str(env_python), "-m", "pip", "--version"],
         capture_output=True,
         text=True,
+        check=False,
     )
     if pip_check.returncode != 0:
         detail = pip_check.stderr or pip_check.stdout or "pip 不可用"
@@ -291,7 +409,7 @@ def create_managed_runtime(version: str, runtime_dir: Path) -> bool:
 
         print(f"python{version} runtime installed")
         return True
-    except Exception as exc:
+    except (OSError, RuntimeError, shutil.Error, subprocess.SubprocessError) as exc:
         if runtime_dir.exists() and not is_python_healthy(
             get_runtime_python_path(version)
         ):
@@ -337,7 +455,7 @@ def ensure_named_env(version: str, env_name: str) -> bool:
             raise RuntimeError(f"python{version} {env_label(env_name)}健康检查失败")
         print(f"python{version} {env_label(env_name)} installed")
         return True
-    except Exception as exc:
+    except (OSError, RuntimeError, shutil.Error, subprocess.SubprocessError) as exc:
         if env_dir.exists():
             shutil.rmtree(env_dir, ignore_errors=True)
         print(f"[red]{exc}[/]")
@@ -345,9 +463,9 @@ def ensure_named_env(version: str, env_name: str) -> bool:
         return False
 
 
-def list_versions() -> None:
+def list_versions(version_list: list[str]) -> None:
     tree = Tree("[bold cyan]Python 环境[/bold cyan]")
-    for version in VERSION_LIST:
+    for version in version_list:
         runtime_dir = get_runtime_dir(version)
         runtime_python = get_runtime_python_path(version)
         envs_dir = get_envs_dir(version)
@@ -437,6 +555,7 @@ def set_global_pip_mirror() -> int:
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0:
         if result.stdout:
@@ -450,6 +569,7 @@ def set_global_pip_mirror() -> int:
         [sys.executable, "-m", "pip", "config", "get", "global.index-url"],
         capture_output=True,
         text=True,
+        check=False,
     )
     if verify.returncode != 0:
         if verify.stdout:
@@ -469,7 +589,7 @@ def is_python_style_argument(arg: str) -> bool:
 
 def is_python_script_argument(arg: str) -> bool:
     lowered = arg.lower()
-    return lowered.endswith(".py") or lowered.endswith(".pyw")
+    return lowered.endswith((".py", ".pyw"))
 
 
 def print_unknown_command(version: str, env_name: str, command_name: str) -> int:
@@ -538,12 +658,24 @@ def run_python(version: str, args: list[str], env_name: str = DEFAULT_ENV_NAME) 
 
 def main() -> None:
     args = sys.argv
-    if len(args) == 1:
+    if len(args) == 1 or args[1] in {"help", "--help", "-h"}:
         print(HELP_STR)
         return
 
     command = args[1]
-    if command in VERSION_LIST:
+    if command == "mirror":
+        raise SystemExit(set_global_pip_mirror())
+    if command == "remove" and len(args) <= 2:
+        print(HELP_STR)
+        return
+
+    try:
+        version_list = load_version_list()
+    except RuntimeError as exc:
+        print(f"[red]{exc}[/]")
+        raise SystemExit(1)
+
+    if command in version_list:
         try:
             env_name, remaining_args = split_name_args(args[2:])
         except ValueError as exc:
@@ -551,20 +683,12 @@ def main() -> None:
             return
         raise SystemExit(run_python(command, remaining_args, env_name))
     if command == "list":
-        list_versions()
-        return
-    if command == "mirror":
-        raise SystemExit(set_global_pip_mirror())
-    if command in {"help", "--help", "-h"}:
-        print(HELP_STR)
+        list_versions(version_list)
         return
     if command == "remove":
-        if len(args) <= 2:
-            print(HELP_STR)
-            return
         version = args[2]
-        if version not in VERSION_LIST:
-            print(f"[red]只能删除支持的版本号 {VERSION_LIST}[/]")
+        if version not in version_list:
+            print(f"[red]只能删除支持的版本号 {version_list}[/]")
             return
         try:
             env_name, remaining_args = split_name_args(args[3:])
@@ -577,4 +701,4 @@ def main() -> None:
         remove_version(version, env_name)
         return
 
-    print(f"支持的Python版本有 {VERSION_LIST}")
+    print(f"支持的Python版本有 {version_list}")
